@@ -1,6 +1,8 @@
+import os
 from distutils.core import setup
 from distutils.extension import Extension
 from Cython.Build import cythonize
+import platform
 import numpy
 
 setup(ext_modules=cythonize('kerrpy_cython/*.pyx'),
