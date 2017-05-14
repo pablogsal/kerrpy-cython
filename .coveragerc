@@ -1,0 +1,9 @@
+[paths]
+source = kerrpy_cython
+
+[run]
+branch = True
+source = kerrpy_cython
+omit =
+    tests/*
+    *__init__.py

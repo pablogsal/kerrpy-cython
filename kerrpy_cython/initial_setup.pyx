@@ -6,7 +6,6 @@ cimport numpy as np
 import numpy as np
 cimport cython
 
-
 ################################################
 ##            GLOBAL DEFINITIONS              ##
 ################################################
@@ -32,14 +31,13 @@ cimport cython
 # which is indicated by yellow lines in the html output.
 
 
-@cython.boundscheck(False) # turn off bounds-checking for entire function
+@cython.boundscheck(False)  # turn off bounds-checking for entire function
 @cython.wraparound(False)  # turn off negative index wrapping for entire function
-@cython.cdivision(True)    # tuern off zerodivisioncheck
-cdef void getCanonicalMomenta( double  rayTheta,  double  rayPhi,double* camBeta,
-                          double *pR,  double *pTheta, double *pPhi,
-                          double *ro, double *delta,
-                          double *alpha, double *omega, double *pomega): 
-
+@cython.cdivision(True)  # tuern off zerodivisioncheck
+cdef void getCanonicalMomenta(double  rayTheta, double  rayPhi, double*camBeta,
+                              double *pR, double *pTheta, double *pPhi,
+                              double *ro, double *delta,
+                              double *alpha, double *omega, double *pomega):
     # **************************** SET NORMAL **************************** #
     # Cartesian components of the unit vector N pointing in the direction of
     # the incoming ray
@@ -52,7 +50,7 @@ cdef void getCanonicalMomenta( double  rayTheta,  double  rayPhi,double* camBeta
     cdef double  den = 1. - camBeta[0] * Ny
 
     # Compute factor common to nx and nz
-    cdef double  fac = -sqrt(1. - camBeta[0]*camBeta[0])
+    cdef double  fac = -sqrt(1. - camBeta[0] * camBeta[0])
 
     # Compute cartesian coordinates of the direction of motion. See(A.9)
     cdef double  nY = (-Ny + camBeta[0]) / den
@@ -77,29 +75,27 @@ cdef void getCanonicalMomenta( double  rayTheta,  double  rayPhi,double* camBeta
     pTheta[0] = E * ro[0] * nTheta
     pPhi[0] = E * pomega[0] * nPhi
 
-
-
-@cython.boundscheck(False) # turn off bounds-checking for entire function
+@cython.boundscheck(False)  # turn off bounds-checking for entire function
 @cython.wraparound(False)  # turn off negative index wrapping for entire function
-@cython.cdivision(True)    # tuern off zerodivisioncheck
-cdef void getConservedQuantities( double  pTheta,  double  pPhi,
-                             double  theta, double a, double* b,  double* q):
+@cython.cdivision(True)  # tuern off zerodivisioncheck
+cdef void getConservedQuantities(double  pTheta, double  pPhi,
+                                 double  theta, double a, double*b, double*q):
     # ********************* GET CONSERVED QUANTITIES ********************* #
     # Get conserved quantities. See (A.12)
     b[0] = pPhi
 
-    cdef double a2 = a*a
+    cdef double a2 = a * a
 
     cdef double  sinT = sin(theta)
-    cdef double  sinT2 = sinT*sinT
+    cdef double  sinT2 = sinT * sinT
 
     cdef double  cosT = cos(theta)
-    cdef double  cosT2 = cosT*cosT
+    cdef double  cosT2 = cosT * cosT
 
-    cdef double  pTheta2 = pTheta*pTheta
-    cdef double  b2 = pPhi*pPhi
+    cdef double  pTheta2 = pTheta * pTheta
+    cdef double  b2 = pPhi * pPhi
 
-    q[0] = pTheta2 + cosT2*((b2/sinT2) - a2)
+    q[0] = pTheta2 + cosT2 * ((b2 / sinT2) - a2)
 
 
 # void setInitialConditions( double * globalInitCond, double * globalConstants,
