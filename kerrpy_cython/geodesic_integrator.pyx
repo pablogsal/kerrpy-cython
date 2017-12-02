@@ -1,4 +1,5 @@
 #cython: language_level=3, boundscheck=False,cdivision=True
+
 from libc.math cimport *
 from libc.string cimport memcpy
 cimport numpy as np
@@ -22,6 +23,10 @@ cimport cython
 # For more information on this matter:
 
 # https://en.wikipedia.org/wiki/Runge%E2%80%93Kutta_methods
+
+cdef int SPHERE = 0
+cdef int DISK = 1
+cdef int HORIZON = 2
 
 
 cdef double A21 = (1./5.)
@@ -617,6 +622,10 @@ cdef int SolverRK45( double* initCond, double* globalX0, double xend,
     cdef double safeInv = 1.0 / safe
     cdef double fac1_inverse = 1.0 / fac1
     cdef double fac2_inverse = 1.0 / fac2
+
+    cdef double innerDiskRadius = 0
+    cdef double outerDiskRadius = 0
+
     
     #################################
     #####  Variable definitions #####
@@ -643,16 +652,6 @@ cdef int SolverRK45( double* initCond, double* globalX0, double xend,
 
     cdef size_t sizeBytes = sizeof(double)*SYSTEM_SIZE
      
-    # Auxiliar arrays to store the intermediate K1, ..., K7 computations
-    # TODO: This 2 is SYSTEM_SIZE!!
-    cdef double k1[5]
-    cdef double k2[5]
-    cdef double k3[5]
-    cdef double k4[5]
-    cdef double k5[5]
-    cdef double k6[5]
-    cdef double k7[5]
-
     # Auxiliar array to store the intermediate calls to the
     # KerrGeodesicEquations function
 
@@ -661,7 +660,6 @@ cdef int SolverRK45( double* initCond, double* globalX0, double xend,
     # Auxiliary variables used to compute the errors at each step.
     
     cdef float sqr                 # Scaled differences in each eq.
-    cdef float errors[5]           # TODO: SYSTEM_SIZE Local error of each eq.
     cdef float err = 0             # Global error of the step
     cdef float sk                  # Scale based on the tolerances
 
@@ -679,6 +677,18 @@ cdef int SolverRK45( double* initCond, double* globalX0, double xend,
     # estimation exceeds 1.
 
     cdef int reject = False  # TODO: Avisar a alejandro de que esto esta como double
+
+    # Variables to keep track of the current r and the previous and
+    # current theta
+    cdef double currentR;
+    cdef int prevThetaSign, currentThetaSign;
+
+    # Initialize previous theta to the initial conditions
+    prevThetaSign = sign(initCond[1] - M_PI/2);
+
+    # Local variable to know how many iterations spent the bisect in the
+    # current step.
+    cdef int bisectIter = 0;
 
     cdef float horizonRadius = 2.0
     cdef int last = False
@@ -702,110 +712,7 @@ cdef int SolverRK45( double* initCond, double* globalX0, double xend,
             h = xend - x0
             last = True
         
-
-        # K1 computation
-        KerrGeodesicEquations(initCond, k1, data)
-
-        # K2 computation
-
-        for i in range(5): # TODO: SYSTEM_SIZE
-            y1[i] = initCond[i] + h * A21 * k1[i]
-
-        KerrGeodesicEquations(y1, k2, data)
-
-        # K3 computation
-
-        for i in range(5): # TODO: SYSTEM_SIZE
-             y1[i] = initCond[i] + h*(A31 * k1[i] + A32 * k2[i])
-
-        KerrGeodesicEquations(y1, k3, data)
-
-        # K4 computation
-
-        for i in range(5): # TODO: SYSTEM_SIZE
-            y1[i] = initCond[i] + h*(A41 * k1[i] +
-                               A42 * k2[i] +
-                               A43 * k3[i])
-
-        KerrGeodesicEquations(y1, k4, data)
-
-        # K5 computation
-
-        for i in range(5): # TODO: SYSTEM_SIZE   
-            y1[i] = initCond[i] + h*( A51 * k1[i] +
-                                A52 * k2[i] +
-                                A53 * k3[i] +
-                                A54 * k4[i])
-
-        KerrGeodesicEquations(y1, k5, data)
-
-        # K6 computation
-        
-        for i in range(5): # TODO: SYSTEM_SIZE
-            y1[i] = initCond[i] + h*(A61 * k1[i] +
-                               A62 * k2[i] +
-                               A63 * k3[i] +
-                               A64 * k4[i] +
-                               A65 * k5[i])
-
-        KerrGeodesicEquations(y1, k6, data)
-
-        # K7 computation
-
-        for i in range(5): # TODO: SYSTEM_SIZE
-            y1[i] = initCond[i] + h*(A71 * k1[i] +
-                               A73 * k3[i] +
-                               A74 * k4[i] +
-                               A75 * k5[i] +
-                               A76 * k6[i])
-
-        KerrGeodesicEquations(y1, k7, data)
-
-        # The Butcher's table (Table 5.2, [1]), shows that the estimated
-        # solution has exactly the same coefficients as the ones used to
-        # compute K7. Then, the solution is the last computed y1!
-
-        # The local error of each equation is computed as the difference
-        # between the solution y and the higher order solution \hat{y}, as
-        # specified in the last two rows of the Butcher's table (Table
-        # 5.2, [1]). Instead of computing \hat{y} and then substract it
-        # from y, the differences between the coefficientes of each
-        # solution have been computed and the error is directly obtained
-        # using them:
-
-        for i in range(5): # TODO: SYSTEM_SIZE
-            errors[i] = h*(E1 * k1[i] +
-                           E3 * k3[i] +
-                           E4 * k4[i] +
-                           E5 * k5[i] +
-                           E6 * k6[i] +
-                           E7 * k7[i])
-
-
-
-        err = 0
-
-        for i in range(5): # TODO: SYSTEM_SIZE
-            # The local estimated error has to satisfy the following
-            # condition: |err[i]| < Atol[i] + Rtol*max(|y_0[i]|, |y_j[i]|)
-            # (see equation (4.10), [1]). The variable sk stores the right
-            # hand size of this inequality to use it as a scale in the local
-            # error computation this way we "normalize" the error and we can
-            # compare it against 1.
-            sk = atoli + rtoli*fmax(fabs(initCond[i]), fabs(y1[i]))
-
-            # Compute the square of the local estimated error (scaled with the
-            # previous factor), as the global error will be computed as in
-            # equation 4.11 ([1]): the square root of the mean of the squared
-            # local scaled errors.
-            sqr = (errors[i])/sk
-            errors[i] = sqr*sqr
-            err += errors[i]
-        
-        # The sum of the local squared errors in now in errors[0], but the
-        # global error is the square root of the mean of those local
-        # errors: we finish here the computation and store it in err.
-        err = sqrt(err / SYSTEM_SIZE)  # TODO: SYSTEM_SIZE
+        err = advance_step(initCond, y1, data, h, atoli, rtoli)
 
         # For full information about the step size computation, please see
         # equation (4.13) and its surroundings in [1] and the notes in
@@ -828,9 +735,11 @@ cdef int SolverRK45( double* initCond, double* globalX0, double xend,
         # New step final (but temporary) computation
         hnew = h / fac
 
-        # Check whether the normalized error, err, is below or over 1.:
-        # REJECT STEP if err > 1.
+        # PHASE 3. Check whether the current step has to be repeated,
+        # depending on its estimated error:
 
+        # Check whether the normalized error, err, is below or over 1.:
+        # PHASE 3.1: REJECT STEP if err > 1
         if err > 1.0:
 
             # Stabilization technique with the minimum and safe factors
@@ -838,6 +747,7 @@ cdef int SolverRK45( double* initCond, double* globalX0, double xend,
             hnew = h / fmin(fac1_inverse, fac11 * safeInv)
             reject = True
 
+        # PHASE 3.2: ACCEPT STEP if err <= 1.
         else:
 
             # Update old factor to new current error (upper bounded to 1e-4)
@@ -861,14 +771,32 @@ cdef int SolverRK45( double* initCond, double* globalX0, double xend,
             # Necessary update for next steps: the local initCond variable holds
             # the current initial condition (now the computed solution)
 
-            for i in range(5): # TODO: SYSTEM_SIZE
-                initCond[i] = y1[i]
+            memcpy(initCond, y1, sizeof(double) * SYSTEM_SIZE)
 
             # This step was accepted, so it was not rejected, so reject is
             # false. SCIENCE.
 
             reject = False
 
+            currentThetaSign = sign(y1[1] - M_PI/2);
+
+            if prevThetaSign != currentThetaSign:
+                bisectIter += bisect(y1, data, h, x0, atoli, rtoli)
+
+                # Retrieve the current r
+                currentR = y1[0]
+
+                # Finally, check whether the current r is inside the disk,
+                # updating the status and copying back the data in the
+                # case it is.
+                if innerDiskRadius<currentR and currentR<outerDiskRadius :
+                    memcpy(initCond, y1, sizeof(double)*SYSTEM_SIZE)
+                    status = DISK;
+                    break
+                prevThetaSign = currentThetaSign;
+
+            #Update the previous variable for the next step computation
+            prevThetaSign = currentThetaSign;
 
         # Final step size update!
 
@@ -884,4 +812,160 @@ cdef int SolverRK45( double* initCond, double* globalX0, double xend,
     
     return 1
 
+
+cdef double advance_step(double* initCond, double* y1, double* data,double h,double atoli,double rtoli):
+
+    cdef float errors[5]           # TODO: SYSTEM_SIZE Local error of each eq.
+    # Auxiliar arrays to store the intermediate K1, ..., K7 computations
+    # TODO: This 2 is SYSTEM_SIZE!!
+    cdef double k1[5]
+    cdef double k2[5]
+    cdef double k3[5]
+    cdef double k4[5]
+    cdef double k5[5]
+    cdef double k6[5]
+    cdef double k7[5]
+    # K1 computation
+    KerrGeodesicEquations(initCond, k1, data)
+    # K2 computation
+    for i in range(5):  # TODO: SYSTEM_SIZE
+        y1[i] = initCond[i] + h * A21 * k1[i]
+    KerrGeodesicEquations(y1, k2, data)
+    # K3 computation
+    for i in range(5):  # TODO: SYSTEM_SIZE
+        y1[i] = initCond[i] + h * (A31 * k1[i] + A32 * k2[i])
+    KerrGeodesicEquations(y1, k3, data)
+    # K4 computation
+    for i in range(5):  # TODO: SYSTEM_SIZE
+        y1[i] = initCond[i] + h * (A41 * k1[i] +
+                                   A42 * k2[i] +
+                                   A43 * k3[i])
+    KerrGeodesicEquations(y1, k4, data)
+    # K5 computation
+    for i in range(5):  # TODO: SYSTEM_SIZE
+        y1[i] = initCond[i] + h * (A51 * k1[i] +
+                                   A52 * k2[i] +
+                                   A53 * k3[i] +
+                                   A54 * k4[i])
+    KerrGeodesicEquations(y1, k5, data)
+    # K6 computation
+    for i in range(5):  # TODO: SYSTEM_SIZE
+        y1[i] = initCond[i] + h * (A61 * k1[i] +
+                                   A62 * k2[i] +
+                                   A63 * k3[i] +
+                                   A64 * k4[i] +
+                                   A65 * k5[i])
+    KerrGeodesicEquations(y1, k6, data)
+    # K7 computation
+    for i in range(5):  # TODO: SYSTEM_SIZE
+        y1[i] = initCond[i] + h * (A71 * k1[i] +
+                                   A73 * k3[i] +
+                                   A74 * k4[i] +
+                                   A75 * k5[i] +
+                                   A76 * k6[i])
+    KerrGeodesicEquations(y1, k7, data)
+    # The Butcher's table (Table 5.2, [1]), shows that the estimated
+    # solution has exactly the same coefficients as the ones used to
+    # compute K7. Then, the solution is the last computed y1!
+    # The local error of each equation is computed as the difference
+    # between the solution y and the higher order solution \hat{y}, as
+    # specified in the last two rows of the Butcher's table (Table
+    # 5.2, [1]). Instead of computing \hat{y} and then substract it
+    # from y, the differences between the coefficientes of each
+    # solution have been computed and the error is directly obtained
+    # using them:
+    for i in range(5):  # TODO: SYSTEM_SIZE
+        errors[i] = h * (E1 * k1[i] +
+                         E3 * k3[i] +
+                         E4 * k4[i] +
+                         E5 * k5[i] +
+                         E6 * k6[i] +
+                         E7 * k7[i])
+    cdef float err = 0
+    for i in range(5):  # TODO: SYSTEM_SIZE
+        # The local estimated error has to satisfy the following
+        # condition: |err[i]| < Atol[i] + Rtol*max(|y_0[i]|, |y_j[i]|)
+        # (see equation (4.10), [1]). The variable sk stores the right
+        # hand size of this inequality to use it as a scale in the local
+        # error computation this way we "normalize" the error and we can
+        # compare it against 1.
+        sk = atoli + rtoli * fmax(fabs(initCond[i]), fabs(y1[i]))
+
+        # Compute the square of the local estimated error (scaled with the
+        # previous factor), as the global error will be computed as in
+        # equation 4.11 ([1]): the square root of the mean of the squared
+        # local scaled errors.
+        sqr = (errors[i]) / sk
+        errors[i] = sqr * sqr
+        err += errors[i]
+    # The sum of the local squared errors in now in errors[0], but the
+    # global error is the square root of the mean of those local
+    # errors: we finish here the computation and store it in err.
+    err = sqrt(err / SYSTEM_SIZE)  # TODO: SYSTEM_SIZE
+    return err
+
+
+cdef int bisect(double* yOriginal, double* data, double step, double x, double atoli, double rtoli):
+
+    cdef double BISECT_TOL = 0.000001
+    cdef int BISECT_MAX_ITER = 100
+
+    # It is necessary to maintain the previous theta to know the direction
+    # change; we'll store it centered in zero, and not in pi/2 in order to
+    # removes some useless substractions in the main loop.
+    cdef double prevThetaCentered, currentThetaCentered
+    prevThetaCentered = yOriginal[1] - M_PI / 2
+
+    # The first step shall be to the other side and half of its length.
+    step = - step * 0.5
+
+    # Loop variables, to control that the iterations does not exceed a maximum
+    # number
+    cdef int iter = 0
+
+    # Array used by advanceStep() routine, which expects a pointer where the
+    # computed new state should be stored
+    cdef double yNew[5]
+
+    # This loop implements the main behaviour of the algorithm basically,
+    # this is how it works:
+    #    1. It advance the point one single step with the RK45 algorithm.
+    #    2. If theta has crossed pi/2, it changes the direction of the
+    #    new step. The magnitude of the new step is always half of the
+    #    magnitude of the previous one.
+    #    3. It repeats 1 and 2 until the current theta is very near of Pi/2
+    #    ("very near" is defined by BISECT_TOL) or until the number of
+    #    iterations exceeds a maximum number previously defined.
+    while(abs(prevThetaCentered) > BISECT_TOL and iter < BISECT_MAX_ITER):
+        # 1. Advance the ray one step.
+        advance_step(yOriginal,yNew, data,step, atoli, rtoli)
+        memcpy(yOriginal, yNew, sizeof(double)*SYSTEM_SIZE)
+        x += step
+
+        # Compute the current theta, centered in zero
+        currentThetaCentered = yOriginal[1] - M_PI/2
+
+        # 2. Change the step direction whenever theta crosses the target,
+        # pi/2, and make it half of the previous one.
+        step = step * sign(currentThetaCentered)*sign(prevThetaCentered) * 0.5
+
+        # Update the previous theta, centered in zero, with the current one
+        prevThetaCentered = currentThetaCentered
+
+        iter+=1
+
+    # Return the number of iterations spent in the loop
+    return iter
+
+
+##### UTILS
+"""
+/**
+ * Returns the sign of `x`; i.e., it returns +1 if x >= 0 and -1 otherwise.
+ * @param  x The number whose sign has to be returned
+ * @return   Sign of `x`, considering 0 as positive.
+ */
+"""
+cdef inline int sign(double x):
+    return -1 if x < 0 else +1
 
