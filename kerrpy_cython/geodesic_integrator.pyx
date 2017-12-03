@@ -6,6 +6,10 @@ cimport numpy as np
 import numpy as np
 cimport cython
 
+from libc.stdio cimport printf
+
+cdef extern from "stdlib.h" nogil:
+    double fabs (double number)
 
 ################################################
 ##            GLOBAL DEFINITIONS              ##
@@ -399,7 +403,7 @@ cdef void Solver(double x, double xend, int n_steps,
 @cython.boundscheck(False) # turn off bounds-checking for entire function
 @cython.wraparound(False)  # turn off negative index wrapping for entire function
 @cython.cdivision(True)    # tuern off zerodivisioncheck
-cdef void KerrGeodesicEquations(double* y, double* f,double* data):
+cdef void KerrGeodesicEquations(double* y, double* f,double* data) nogil:
     """
     This function computes the right hand side of the Kerr geodesic equations described
     in http://arxiv.org/abs/1502.03808.
@@ -572,8 +576,7 @@ cdef int SolverRK45( double* initCond, double* globalX0, double xend,
                      double beta    = 0.04,
                      double uround  = 2.3e-16,
                      double fac1    = 0.2,
-                     double fac2    = 10.0  ):
-
+                     double fac2    = 10.0  ) nogil:
     """
      /**
       * Applies the DOPRI5 algorithm over the system defined in the KerrGeodesicEquations
@@ -624,7 +627,7 @@ cdef int SolverRK45( double* initCond, double* globalX0, double xend,
     cdef double fac2_inverse = 1.0 / fac2
 
     cdef double innerDiskRadius = 0
-    cdef double outerDiskRadius = 0
+    cdef double outerDiskRadius = 10
 
     
     #################################
@@ -648,7 +651,7 @@ cdef int SolverRK45( double* initCond, double* globalX0, double xend,
     # and get the absolute value of the maximum step size.
 
     cdef double integrationDirection = +1. if xend - x0 > 0. else -1.
-    hmax = abs(hmax)
+    hmax = fabs(hmax)
 
     cdef size_t sizeBytes = sizeof(double)*SYSTEM_SIZE
      
@@ -690,6 +693,9 @@ cdef int SolverRK45( double* initCond, double* globalX0, double xend,
     # current step.
     cdef int bisectIter = 0;
 
+    # Initial status of the ray: SPHERE
+    cdef int status = SPHERE
+
     cdef float horizonRadius = 2.0
     cdef int last = False
 
@@ -700,7 +706,7 @@ cdef int SolverRK45( double* initCond, double* globalX0, double xend,
         # not too near. Although the last condition belongs to the raytracer
         # logic, it HAS to be checked here.
         
-        if (0.1 * abs(h) <= abs(x0) * uround and not last):
+        if (0.1 * fabs(h) <= fabs(x0) * uround and not last):
             hOrig[0] = h
             return -1
 
@@ -791,9 +797,8 @@ cdef int SolverRK45( double* initCond, double* globalX0, double xend,
                 # case it is.
                 if innerDiskRadius<currentR and currentR<outerDiskRadius :
                     memcpy(initCond, y1, sizeof(double)*SYSTEM_SIZE)
-                    status = DISK;
+                    status = DISK
                     break
-                prevThetaSign = currentThetaSign;
 
             #Update the previous variable for the next step computation
             prevThetaSign = currentThetaSign;
@@ -810,10 +815,10 @@ cdef int SolverRK45( double* initCond, double* globalX0, double xend,
     globalFacold[0] = facold
     globalX0[0] = x0
     
-    return 1
+    return status
 
 
-cdef double advance_step(double* initCond, double* y1, double* data,double h,double atoli,double rtoli):
+cdef double advance_step(double* initCond, double* y1, double* data,double h,double atoli,double rtoli) nogil:
 
     cdef float errors[5]           # TODO: SYSTEM_SIZE Local error of each eq.
     # Auxiliar arrays to store the intermediate K1, ..., K7 computations
@@ -905,7 +910,7 @@ cdef double advance_step(double* initCond, double* y1, double* data,double h,dou
     return err
 
 
-cdef int bisect(double* yOriginal, double* data, double step, double x, double atoli, double rtoli):
+cdef int bisect(double* yOriginal, double* data, double step, double x, double atoli, double rtoli) nogil:
 
     cdef double BISECT_TOL = 0.000001
     cdef int BISECT_MAX_ITER = 100
@@ -936,7 +941,7 @@ cdef int bisect(double* yOriginal, double* data, double step, double x, double a
     #    3. It repeats 1 and 2 until the current theta is very near of Pi/2
     #    ("very near" is defined by BISECT_TOL) or until the number of
     #    iterations exceeds a maximum number previously defined.
-    while(abs(prevThetaCentered) > BISECT_TOL and iter < BISECT_MAX_ITER):
+    while(fabs(prevThetaCentered) > BISECT_TOL and iter < BISECT_MAX_ITER):
         # 1. Advance the ray one step.
         advance_step(yOriginal,yNew, data,step, atoli, rtoli)
         memcpy(yOriginal, yNew, sizeof(double)*SYSTEM_SIZE)
@@ -966,6 +971,6 @@ cdef int bisect(double* yOriginal, double* data, double step, double x, double a
  * @return   Sign of `x`, considering 0 as positive.
  */
 """
-cdef inline int sign(double x):
+cdef inline int sign(double x) nogil:
     return -1 if x < 0 else +1
 

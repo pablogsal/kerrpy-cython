@@ -14,6 +14,8 @@ coverage = "*"
 pytest-cov = "*"
 pytest-benchmark = "*"
 setuptools = "*"
+matplotlib = "*"
+tqdm = "*"
 
 
 [dev-packages]

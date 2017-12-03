@@ -22,20 +22,20 @@ from kerrpy_cython._common.metric_utils cimport MetricValues, _compute_metric_va
 # Notice that these functions HAVE overhead because they interface with python code and
 # python objects will be constructed and unpacked each time the function is summoned.
 
-cpdef double [:] get_initial_conditions(dict camera_values, double a, parallel=False):
+cpdef get_initial_conditions(dict camera_values, double a, parallel=False):
     cdef MetricValues metric = _compute_metric_values(a, camera_values["r"], camera_values["theta"])
     cdef Camera camera = _compute_camera_values(camera_values, &metric)
 
     cdef int image_rows = camera_values["rows"]
     cdef int image_cols = camera_values["cols"]
     cdef double[:] initial_conditions = np.zeros(image_rows*image_cols*5)
-    cdef double[:] constants = np.zeros(image_rows*image_cols*2)
+    cdef double[:] constants = np.zeros(image_rows*image_cols*4)
 
     if parallel:
         _get_initial_conditions_parallel(initial_conditions, constants, &camera, &metric)
     else:
         _get_initial_conditions(initial_conditions, constants, &camera, &metric)
-    return initial_conditions
+    return initial_conditions,constants
 
 
 ################################################
@@ -55,7 +55,7 @@ cdef void _get_initial_conditions(double[:] initial_conditions, double[:] consta
     for row in range(camera.rows):
         for col in range(camera.cols):
             pixel =  col+camera.cols*row
-            setInitialConditions(&initial_conditions[pixel * 5], &constants[pixel * 2], row, col, camera, metric)
+            setInitialConditions(&initial_conditions[pixel * 5], &constants[pixel * 4], row, col, camera, metric)
 
 cdef void _get_initial_conditions_parallel(double[:] initial_conditions, double[:] constants,
                                       Camera* camera, MetricValues* metric):
@@ -63,7 +63,7 @@ cdef void _get_initial_conditions_parallel(double[:] initial_conditions, double[
     for row in prange(camera.rows, nogil=True, schedule="guided"):
         for col in range(camera.cols):
             pixel =  col+camera.cols*row
-            setInitialConditions(&initial_conditions[pixel * 5], &constants[pixel * 2], row, col, camera, metric)
+            setInitialConditions(&initial_conditions[pixel * 5], &constants[pixel * 4], row, col, camera, metric)
 
 cdef void setInitialConditions(double* initial_conditions, double* constants,
                            int row, int col, Camera* camera, MetricValues* metric) nogil:
@@ -94,6 +94,8 @@ cdef void setInitialConditions(double* initial_conditions, double* constants,
     # Save ray's constants
     constants[0] = b
     constants[1] = q
+    constants[2] = metric.a
+    constants[3] = 1.0
 
 cdef void getCanonicalMomenta(double  rayTheta, double  rayPhi,
                               double *pR, double *pTheta, double *pPhi,
