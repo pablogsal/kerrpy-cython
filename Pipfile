@@ -7,7 +7,7 @@ name = "pypi"
 
 [packages]
 
-cython = "*"
+Cython = "*"
 pytest = "*"
 numpy = "*"
 coverage = "*"
@@ -16,6 +16,7 @@ pytest-benchmark = "*"
 setuptools = "*"
 matplotlib = "*"
 tqdm = "*"
+Pillow = "*"
 
 
 [dev-packages]

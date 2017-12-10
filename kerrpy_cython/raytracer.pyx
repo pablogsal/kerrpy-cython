@@ -1,20 +1,15 @@
-#cython: language_level=3, boundscheck=False,cdivision=True
-#cython: linetrace=True
-#distutils: define_macros=CYTHON_TRACE=1
-
 from libc.math cimport *
-from libc.string cimport memcpy
-cimport numpy as np
-import numpy as np
-cimport cython
 from cython.parallel cimport prange
 
-from kerrpy_cython._common.camera cimport Camera, _compute_camera_values
-from kerrpy_cython._common.metric_utils cimport MetricValues, _compute_metric_values
-from kerrpy_cython.geodesic_integrator cimport SolverRK45
+from kerrpy_cython.common.camera cimport Camera, compute_camera_values
+from kerrpy_cython.common.metric_utils cimport MetricValues, compute_metric_values
+from kerrpy_cython.common.universe cimport Universe
+from kerrpy_cython.geodesic_integrator cimport solver_rk45
 
 import tqdm
 
+from libc.stdio cimport printf
+from libc.stdlib cimport malloc, calloc
 
 ################################################
 ##            GLOBAL DEFINITIONS              ##
@@ -24,6 +19,9 @@ cdef int SPHERE = 0
 cdef int DISK = 1
 cdef int HORIZON = 2
 
+DEF SYSTEM_SIZE = 5
+DEF DATA_SIZE = 4
+
 ################################################
 ##         PYTHON-ACCESIBLE FUNCTIONS         ##
 ################################################
@@ -31,22 +29,28 @@ cdef int HORIZON = 2
 # Notice that these functions HAVE overhead because they interface with python code and
 # python objects will be constructed and unpacked each time the function is summoned.
 
-def call_kernel(double[:] init_conditions, double[:] data, int[:] status, dict camera_values, double a,parallel=False,progress=False):
-    cdef MetricValues metric = _compute_metric_values(a, camera_values["r"], camera_values["theta"])
-    cdef Camera camera = _compute_camera_values(camera_values, &metric)
+def call_kernel(double[:] init_conditions, double[:] data, int[:] status,
+                dict camera_values, dict universe_values,
+                parallel=False, progress=False):
+
+    cdef MetricValues metric = compute_metric_values(
+        universe_values["a"], camera_values["r"], camera_values["theta"])
+
+    cdef Camera camera = compute_camera_values(camera_values, &metric)
+
+    cdef Universe universe
+    universe.inner_disk_radius = universe_values["inner_disk_radius"]
+    universe.outer_disk_radius = universe_values["outer_disk_radius"]
 
     cdef int image_rows = camera_values["rows"]
     cdef int image_cols = camera_values["cols"]
     if parallel:
         if progress:
-            kernel_parallel_progress(0, -150, init_conditions, -0.001, -150, data, status, &camera)
+            kernel_parallel_progress(0, -150, init_conditions, -0.001, -150, data, status, &camera, &universe)
         else:
-            kernel_parallel(0, -150, init_conditions, -0.001, -150, data, status, &camera)
+            kernel_parallel(0, -150, init_conditions, -0.001, -150, data, status, &camera, &universe)
     else:
-        kernel_serial(0, -150, init_conditions, -0.001, -150, data, status, &camera)
-
-
-
+        kernel_serial(0, -150, init_conditions, -0.001, -150, data, status, &camera, &universe)
 
 ################################################
 ##                C FUNCTIONS                 ##
@@ -61,45 +65,45 @@ def call_kernel(double[:] init_conditions, double[:] data, int[:] status, dict c
 
 cdef void kernel_serial(double x0, double xend, double[:] initial_conditions, double h,
                        double hmax, double[:] data, int[:] status,
-                       Camera* camera):
+                       Camera* camera, Universe* universe):
     cdef int row, col, pixel
     for row in tqdm.trange(camera.rows):
         for col in tqdm.trange(camera.cols):
             pixel =  col+camera.cols*row
-            kernel(x0, xend, &initial_conditions[pixel * 5],h, hmax,
-                   &data[pixel * 4], &status[pixel], camera)
+            kernel(x0, xend, &initial_conditions[pixel * SYSTEM_SIZE],h, hmax,
+                   &data[pixel * DATA_SIZE], &status[pixel], camera, universe)
 
 
 cdef void kernel_parallel_progress(double x0, double xend, double[:] initial_conditions, double h,
                        double hmax, double[:] data, int[:] status,
-                       Camera* camera):
+                       Camera* camera, Universe* universe):
     cdef int row, col, pixel
     for row in tqdm.trange(camera.rows):
         for col in prange(camera.cols, nogil=True, schedule="guided"):
             pixel =  col+camera.cols*row
-            kernel(x0, xend, &initial_conditions[pixel * 5],h, hmax,
-                   &data[pixel * 4], &status[pixel], camera)
+            kernel(x0, xend, &initial_conditions[pixel * SYSTEM_SIZE],h, hmax,
+                   &data[pixel * DATA_SIZE], &status[pixel], camera, universe)
 
 
 
 cdef void kernel_parallel(double x0, double xend, double[:] initial_conditions, double h,
                        double hmax, double[:] data, int[:] status,
-                       Camera* camera):
+                       Camera* camera, Universe* universe):
     cdef int row, col, pixel
-    for row in prange(camera.rows, nogil=True, schedule="guided"):
+    for row in prange(camera.rows,nogil=True, schedule="guided"):
         for col in range(camera.cols):
             pixel =  col+camera.cols*row
-            kernel(x0, xend, &initial_conditions[pixel * 5],h, hmax,
-                   &data[pixel * 4], &status[pixel], camera)
+            kernel(x0, xend, &initial_conditions[pixel * SYSTEM_SIZE],h, hmax,
+                   &data[pixel * DATA_SIZE], &status[pixel], camera, universe)
 
 cdef void kernel(double x0, double xend, double* pixel_init_conditions, double h,
                        double hmax, double* pixel_data, int* pixel_status,
-                       Camera* camera) nogil:
+                       Camera* camera, Universe* universe) nogil:
     # Compute pixel's row and col of this thread
     cdef int local_status
     cdef double x
     cdef int iterations
-    cdef double facold = 1.0e-4
+    cdef double facold = 1.0e-4 #TODO Allow the user to set this
     # Compute pixel unique identifier for this thread
 
     # Array of status flags: at the output, the (x,y)-th element will be
@@ -131,7 +135,7 @@ cdef void kernel(double x0, double xend, double* pixel_init_conditions, double h
         #          the horizon).
         #          2.2. If the answer to the 2. test is positive: update
         #          the status of the ray to HORIZON.
-        local_status = SolverRK45(pixel_init_conditions, &x,xend, &h, xend - x, pixel_data, &facold)
+        local_status = solver_rk45(pixel_init_conditions, &x,xend, &h, xend - x, pixel_data, &facold, universe)
 
         # Update the global status variable with the new computed status
         pixel_status[0] = local_status

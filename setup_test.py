@@ -13,6 +13,9 @@ extensions = [
               include_dirs=[numpy.get_include()]),
     # Extension("raytracer", ["kerrpy_cython/raytracer.pyx"],
     #           include_dirs=[numpy.get_include()]),
+    Extension("kerrpy_cython.kerr_equations", ["kerrpy_cython/kerr_equations.pyx"],
+              define_macros = [('CYTHON_TRACE', '1'), ('CYTHON_TRACE_NOGIL', '1')],
+              include_dirs=[numpy.get_include()]),
     Extension("kerrpy_cython.metric", ["kerrpy_cython/metric.pyx"],
               define_macros = [('CYTHON_TRACE', '1'), ('CYTHON_TRACE_NOGIL', '1')],
               include_dirs=[numpy.get_include()]),
@@ -23,7 +26,7 @@ extensions = [
               include_dirs=[numpy.get_include()]),
 ]
 
-common_includes = ["kerrpy_cython/_common/*.pyx"]
+common_includes = ["kerrpy_cython/common/*.pyx"]
 
 setup(
     name="kerrpy_cython",

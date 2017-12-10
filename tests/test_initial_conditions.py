@@ -4,7 +4,7 @@ import numpy as np
 import numpy.testing as npt
 import itertools
 import kerrpy_cython.initial_setup
-from kerrpy_cython.initial_setup import get_initial_conditions
+from kerrpy_cython.initial_setup import generate_initial_conditions
 
 from utils import compiled_with_openmp
 
@@ -15,9 +15,10 @@ def test_initial_conditions_different_dimensions(dimension, parallel):
     camera = {"r": 40, "theta": 1.511, "phi": 0, "focal_lenght": 20, "rows": dimension, "cols": dimension,
               "pixel_heigh": 16 / dimension, "pixel_width": 16 / dimension, "yaw": 0, "roll": 0, "pitch": 0}
     # WHEN
-    initial_conditions = np.array(get_initial_conditions(camera, 0.5, parallel=parallel))
+    initial_conditions, _ = np.array(generate_initial_conditions(camera, 0.5, parallel=parallel))
 
     # THEN
+    initial_conditions = np.array(initial_conditions)
     r = initial_conditions[::5].reshape(dimension, dimension)
     theta = initial_conditions[1::5].reshape(dimension, dimension)
     phi = initial_conditions[2::5].reshape(dimension, dimension)
@@ -50,11 +51,11 @@ def test_initial_conditions_parallel_is_faster():
               "pixel_heigh": 16 / dimension, "pixel_width": 16 / dimension, "yaw": 0, "roll": 0, "pitch": 0}
     # WHEN
     t0 = time.perf_counter()
-    np.array(get_initial_conditions(camera, 0.5, parallel=False))
+    np.array(generate_initial_conditions(camera, 0.5, parallel=False)[0])
     serial_time = time.perf_counter() - t0
 
     t0 = time.perf_counter()
-    initial_conditions = np.array(get_initial_conditions(camera, 0.5, parallel=True))
+    initial_conditions = np.array(generate_initial_conditions(camera, 0.5, parallel=True)[0])
     parallel_time = time.perf_counter() - t0
 
     assert serial_time / parallel_time > 1.2

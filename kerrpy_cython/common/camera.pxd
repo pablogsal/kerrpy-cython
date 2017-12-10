@@ -1,6 +1,6 @@
 #cython: language_level=3, boundscheck=False,cdivision=True
 
-from kerrpy_cython._common.metric_utils cimport MetricValues
+from kerrpy_cython.common.metric_utils cimport MetricValues
 
 cdef struct Camera:
     double r
@@ -16,4 +16,4 @@ cdef struct Camera:
     double focal_lenght
     double beta
 
-cdef Camera _compute_camera_values(dict camera_values, MetricValues*metric)
+cdef Camera compute_camera_values(dict camera_values, MetricValues*metric)

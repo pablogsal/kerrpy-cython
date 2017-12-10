@@ -1,12 +1,12 @@
-#cython: language_level=3, boundscheck=False,cdivision=True
-
+import cython
+import numpy as np
+cimport numpy as np
 from libc.math cimport *
 from libc.string cimport memcpy
-cimport numpy as np
-import numpy as np
-cimport cython
 
-from libc.stdio cimport printf
+from kerrpy_cython.kerr_equations cimport KerrGeodesicEquations
+from kerrpy_cython.metric cimport calculate_temporal_component
+from kerrpy_cython.common.universe cimport Universe
 
 cdef extern from "stdlib.h" nogil:
     double fabs (double number)
@@ -17,7 +17,7 @@ cdef extern from "stdlib.h" nogil:
 
 ####  Butcher's tableau coefficients   ####
 
-# These coefficients are needed for the RK45 Solver to work. 
+# These coefficients are needed for the RK45 multistep_solver to work.
 # When calculating the different samples for the derivative, each
 # sample is weighted differently according to some coefficients: These
 # numbers the weighting coefficients. Each Runge-Kutta method has its
@@ -54,7 +54,7 @@ cdef double A64 = (49./176.)
 cdef double A65 = (- 5103./18656.)
 
 cdef double A71 = (35./384.)
-cdef double A72 = (0)
+cdef double A72 = 0
 cdef double A73 = (500./1113.)
 cdef double A74 = (125./192.)
 cdef double A75 = (- 2187./6784.)
@@ -64,11 +64,11 @@ cdef double C2 = (1./5.)
 cdef double C3 = (3./10.)
 cdef double C4 = (4./5.)
 cdef double C5 = (8./9.)
-cdef double C6 = (1)
-cdef double C7 = (1)
+cdef double C6 = 1
+cdef double C7 = 1
 
 cdef double E1 = (71./57600.)
-cdef double E2 = (0)
+cdef double E2 = 0
 cdef double E3 = (- 71./16695.)
 cdef double E4 = (71./1920.)
 cdef double E5 = (- 17253./339200.)
@@ -78,13 +78,13 @@ cdef double E7 = (- 1./40.)
 
 #### System Size ####
 
-# We are not constructing a general-pourpose integrator, instead we knoe that we
+# We are not constructing a general-pourpose integrator, instead we know that we
 # want to integrate Kerr's geodesics. The system of differential equations for
 # our version of the geodesic equations ( our version <-> the Hamiltonian we are
 # using ) has 5 equations: 3 for the coordinates and 2 for the momenta because
 # the third momenta equation vanishes explicitly. 
 
-cdef int SYSTEM_SIZE = 5
+DEF SYSTEM_SIZE = 5
 
 
 ################################################
@@ -153,8 +153,7 @@ cpdef np.ndarray[np.float64_t, ndim=2] integrate_ray(double [:] three_position,
 
     # Calculate the temporal component of the momenta ( the energy )
 
-    cdef double energy = calculate_temporal_component(three_momenta,three_position,
-                                          a, causality)
+    cdef double energy = calculate_temporal_component(three_momenta, three_position, a, causality)
     # Set conserved quantities. See (A.12)
 
     cdef double b = pPhi
@@ -165,7 +164,7 @@ cpdef np.ndarray[np.float64_t, ndim=2] integrate_ray(double [:] three_position,
     cdef np.ndarray[np.float64_t, ndim=1] init = np.array([r, theta, phi, pR, pTheta])
     cdef np.ndarray[np.float64_t, ndim=1] data = np.array([b,q,a,energy]) 
    
-    Solver(x0, xend, n_steps, init, data, result)
+    multistep_solver(x0, xend, n_steps, init, data, result, NULL) #TODO: Change null for universe
 
     return result
 
@@ -234,83 +233,11 @@ cpdef np.ndarray[np.float64_t, ndim=2] test_integrate_camera_ray(double r, doubl
     cdef np.ndarray[np.float64_t, ndim=2] result = np.zeros((n_steps+1,5))
     cdef np.ndarray[np.float64_t, ndim=1] init = np.array([r, cam_theta, cam_phi, pR, pTheta])
     cdef np.ndarray[np.float64_t, ndim=1] data = np.array([b,q,a,E]) 
-    Solver(x0, xend, n_steps, init, data, result)
+    multistep_solver(x0, xend, n_steps, init, data, result, NULL)
 
     return result
 
 
-cpdef double calculate_temporal_component(double [:] three_momenta,
-                                   double [:] three_position,
-                                   double a, int causality ):
-    """
-    Calculate the temporal component of the momenta given the value of the three-momenta and
-    its position in the spacetime.
-
-    :param three_position: np.array[:]
-        A numpy array representing the initial position of the geodesic in a time slice of
-        the spacetime.
-
-        It must be given in the form
-
-        three_position = [r, theta, phi]
-
-        where {r,theta,phi} are the Boyer-Lindquist coordinates.
-
-    :param thee_momenta: np.array[:]
-        A numpy array representing the initial momenta ( covariant tangent vector) of the
-        geodesic in a time slice of the spacetime.
-
-        It must be given in the form
-
-        three_momenta = [pr, ptheta, pphi]
-
-        where {pr, ptheta, pphi} are the covariant components of the tangent three-vector in
-        Boyer-Lindquist coordinates.
-
-    :param causality: int
-        The causal character of the geodesic tangent vector.
-
-            - (-1) for timelike geodesics.
-            -   0  for spacelike geodesics.
-    """
-
-    cdef double r = three_position[0]
-    cdef double theta = three_position[1]
-    cdef double phi = three_position[2]
-    cdef double pr = three_momenta[0]
-    cdef double ptheta = three_momenta[1]
-    cdef double pphi = three_momenta[2]
-    # Calculate common terms
-
-    cdef double r2 = r*r
-    cdef double a2 = a*a
-
-    cdef double ro = sqrt(r2 + a2 * cos(theta)**2)
-    cdef double delta = r2 - 2*r + a2
-    cdef double sigma = sqrt((r2 + a2)**2 - a2 * delta * sin(theta)**2)
-    cdef double pomega = sigma * sin(theta) / ro
-    cdef double omega = 2 * a * r / ( sigma * sigma )
-    cdef double alpha = ro *  sqrt(delta) / sigma
-    
-    cdef double result = 0
-    if causality == 0:
-        result =  - sqrt( pphi * pphi * ro * ro +
-                      ( ptheta * ptheta + pr * pr * delta )
-                       * pomega * pomega)
-        result *= alpha
-        result /= ro * pomega
-        result -=  pphi * omega
-
-        return result
-    else:
-        result = - sqrt( pphi * pphi * ro * ro +
-                      ( ptheta * ptheta + pr * pr * delta + ro * ro )
-                       * pomega * pomega)
-        result *= alpha
-        result /= ro * pomega
-        result -=  pphi * omega
-
-        return result
 
 ################################################
 ##                C FUNCTIONS                 ##
@@ -323,20 +250,18 @@ cpdef double calculate_temporal_component(double [:] three_momenta,
 # Please, check using cython -a {this_file_name}.pyx that these functions do not have python-related code,
 # which is indicated by yellow lines in the html output.
 
-
-
 @cython.boundscheck(False) # turn off bounds-checking for entire function
 @cython.wraparound(False)  # turn off negative index wrapping for entire function
 @cython.cdivision(True)    # tuern off zerodivisioncheck
-cdef void Solver(double x, double xend, int n_steps, 
+cdef void multistep_solver(double x, double xend, int n_steps,
                  double [:] initCond,double[:] data,
-                 double [:,:] result):
+                 double [:,:] result, Universe* universe):
     """
-    This function acts as an interface with the RK45 Solver. Its pourpose is avoid the
-    overhead of calling the Runge-Kutta solver multiple times from python, which creates
+    This function acts as an interface with the RK45 multistep_solver. Its pourpose is avoid the
+    overhead of calling the Runge-Kutta multistep_solver multiple times from python, which creates
     and unpacks a lot of python objects. The caller must pass a result buffer ( a python
     memoryview) and this function will populate the buffer with the result of successive
-    calls to the Runge-Kutta solver.
+    calls to the Runge-Kutta multistep_solver.
 
     :param x: double
         The initial point of the independent variable for the integration
@@ -347,7 +272,7 @@ cdef void Solver(double x, double xend, int n_steps,
         ¡IMPORTANT! This number has to be larger than the dimension of the `result` buffer.
     :param initCond: memoryview
         The initial conditions at the point x.
-        ¡IMPORTANT! The content of this memoryview will be overwritten by the solver.
+        ¡IMPORTANT! The content of this memoryview will be overwritten by the multistep_solver.
     :param data: memoryview
         Aditional data needed for computing the right hand side of the equations to integrate.
     :param result: memoryview (2D)
@@ -359,8 +284,6 @@ cdef void Solver(double x, double xend, int n_steps,
     cdef double step = (xend - x) / n_steps
     cdef int current_step, i
     
-    
-    # Create arrays to use in the solver and copy the initial conditions and
     # data to them. This may seem a bit odd but is here because the function KerrGeodesicEquations
     # is called with the initial data to compute K1 and with the calculated data to compute K2,...,Kn.
     # As the type of the initCond variable is a memoryview we would need to use another memoryview to
@@ -389,7 +312,7 @@ cdef void Solver(double x, double xend, int n_steps,
 
 
     for current_step in range(n_steps):
-        SolverRK45( initial_conditions, &x, x+step, &hOrig, 0.1, aditional_data, &globalFacold)
+        solver_rk45(initial_conditions, &x, x + step, &hOrig, 0.1, aditional_data, &globalFacold, universe)
 
         # Store the result of the integration in the buffer
 
@@ -403,222 +326,17 @@ cdef void Solver(double x, double xend, int n_steps,
 @cython.boundscheck(False) # turn off bounds-checking for entire function
 @cython.wraparound(False)  # turn off negative index wrapping for entire function
 @cython.cdivision(True)    # tuern off zerodivisioncheck
-cdef void KerrGeodesicEquations(double* y, double* f,double* data) nogil:
-    """
-    This function computes the right hand side of the Kerr geodesic equations described
-    in http://arxiv.org/abs/1502.03808.
-
-    All the computations are highly optimized to avoid calculating the same term twice.
-
-    :param y: pointer to double
-        The current coordinate values to compute the equations. ( Will not be modified)
-        The array must follow the following convention for the variables:
-            0 -> r
-            1 -> theta
-            2 -> phi
-            3 -> p_r
-            4 -> p_theta
-
-    :param f: pointer to double
-        The place where the values of the equations will be stored.
-        The array will follow this convention:
-            0 -> d(r)/dt
-            1 -> d(theta)/dt
-            2 -> d(phi)/dt
-            3 -> d(p_r)/dt
-            4 -> d(p_theta)/dt
-
-            Where t is the independent variable (propper time).
-
-    :param data: pointer to double
-        Aditional data needed for the computation. Explicitly:
-
-            0 -> b ( Angular momentum)
-            1 -> q ( Carter's constant)
-            2 -> a ( Black Hole spin)
-            3 -> e ( Energy )
-    """
-    # Variables to hold the position of the ray, its momenta and related
-    # operations between them and the constant a, which is the spin of the
-    # black hole.
-    cdef double r, r2, twor, theta, pR, pR2, pTheta, pTheta2, b, twob, b2, q, bMinusA, bMinusAE,a, a2
-    # Variables to hold the sine and cosine of theta, along with some
-    # operations with them
-    cdef double sinT, cosT, sinT2, sinT2Inv, cosT2
-
-    # Variables to hold the value of the functions P, R, Delta (which is
-    # called D), Theta (which is called Z) and rho, along with some operations
-    # involving these values.
-    cdef double P, R, D, Dinv, Z, DZplusR, rho2Inv, twoRho2Inv, rho4Inv
-    
-    # Variable for the energy
-
-    cdef double energy
-    cdef double energy2
-
-    # Retrieval of the input data (position of the ray, momenta and
-    # constants).
-    r = y[0]
-    theta = y[1]
-    pR = y[3]
-    pTheta = y[4]
-
-    # Computation of the square of r, widely used in the computations.
-    r2 = r*r
-
-    # Sine and cosine of theta, as well as their squares and inverses.
-    sinT = sin(theta)
-    cosT = cos(theta)
-    sinT2 = sinT*sinT
-    sinT2Inv = 1/sinT2
-    cosT2 = cosT*cosT
-
-    # Retrieval of the constants data: b and q, along with the computation of
-    # the square of b and the number b - a, repeateadly used throughout the
-    # computation
-    b = data[0]
-    q = data[1]
-    a = data[2]
-    energy = data[3]
-    energy2 = energy * energy
-
-    a2 = a*a
-    b2 = b*b
-    bMinusA = b - a
-    bMinusAE = b - a * energy
-
-    # Commonly used variables: R, D, Theta (that is called Z) and
-    # rho (and its square and cube).
-    D = r2 - 2*r + a2
-    Dinv = 1/D
-
-    P = ( a2 + r2 ) * energy - a * b
-    R = P*P - D*(bMinusAE*bMinusAE + q )
-    Z = q - cosT2*(b2*sinT2Inv - energy2 *  a2)
-
-    rho2Inv = 1/(r2 + a2*cosT2)
-    twoRho2Inv = rho2Inv/2
-    rho4Inv = rho2Inv*rho2Inv
-
-    # Squares of the momenta components
-    pR2 = pR*pR
-    pTheta2 = pTheta*pTheta
-
-    # Double b and double r, that's it! :)
-    twob = 2*b
-    twor = 2*r
-
-    # Declaration of variables used in the actual computation: dR, dZ, dRho
-    # and dD will store the derivatives of the corresponding functions (with
-    # respect to the corresponding variable in each thread). The sumX values
-    # are used as intermediate steps in the final computations, in order to
-    # ease notation.
-    cdef double dR, dZ, dRhoTimesRho, dD, sum1, sum2, sum3, sum4, sum5, sum6
-
-    # *********************** EQUATION 1 *********************** //
-    f[0] = D * pR * rho2Inv
-
-    # *********************** EQUATION 2 *********************** //
-    f[1] = pTheta * rho2Inv
-
-    # *********************** EQUATION 3 *********************** //
-    # Derivatives with respect to b
-    dR = -2.0 * D * bMinusAE + (-2.0) * a * P
-    dZ = - twob * cosT2 * sinT2Inv
-
-    f[2] = - (dR + D*dZ)*Dinv*twoRho2Inv
-
-    # *********************** EQUATION 4 *********************** //
-    # Derivatives with respect to r
-    dD = twor - 2
-    dR = 4.0 * r * energy * P  - ( q + bMinusAE * bMinusAE ) * ( twor - 2.0 )
-    DZplusR = D*Z + R
-
-    sum1 = + pTheta2
-    sum2 = + D*pR2
-    sum3 = - (DZplusR * Dinv)
-    sum4 = - (dD*pR2)
-    sum5 = + (dD*Z + dR) * Dinv
-    sum6 = - (dD*DZplusR * Dinv * Dinv)
-
-    f[3] = r*(sum1 + sum2 + sum3)*rho4Inv + (sum4 + sum5 + sum6)*twoRho2Inv
-    # *********************** EQUATION 5 *********************** //
-    # Derivatives with respect to theta (called z here)
-    dRhoTimesRho = - a2*cosT*sinT
-
-    cdef double cosT3 = cosT2*cosT
-    cdef double sinT3 = sinT2*sinT
-
-    dZ = - 2 * ( Z - q ) / cosT * sinT + (2*b2*cosT3)/(sinT3)
-
-    sum1 = + pTheta2
-    sum2 = + D*pR2
-    sum3 = - DZplusR * Dinv
-    sum4 = + dZ * twoRho2Inv
-
-    f[4] = dRhoTimesRho*(sum1 + sum2 + sum3)*rho4Inv + sum4
-
-
-
-
-
-
-
-@cython.boundscheck(False) # turn off bounds-checking for entire function
-@cython.wraparound(False)  # turn off negative index wrapping for entire function
-@cython.cdivision(True)    # tuern off zerodivisioncheck
-cdef int SolverRK45( double* initCond, double* globalX0, double xend,
-                     double* hOrig   , double hmax, double* data,
-                     double* globalFacold,
+cdef int solver_rk45(double* init_cond, double* initial_x0, double xend,
+                     double* h_orig, double hmax, double* data,
+                     double* initial_fac_old,
+                     Universe* universe,
                      double rtoli   = 1e-06,
                      double atoli   = 1e-12,
                      double safe    = 0.9,
                      double beta    = 0.04,
                      double uround  = 2.3e-16,
                      double fac1    = 0.2,
-                     double fac2    = 10.0  ) nogil:
-    """
-     /**
-      * Applies the DOPRI5 algorithm over the system defined in the KerrGeodesicEquations
-      * function, using the initial conditions specified in InitCond,
-      * and returning the solution found at xend.
-      * @param[in,out]  Real*  globalX0     Start of the integration interval
-      *                        [x_0, x_{end}]. At the output, this variable is set
-      *                        to the final time the solver reached.
-      * @param[in]      Real   xend         End of the integration interval
-      *                        [x_0, x_{end}].
-      * @param[in,out]  Real*  initCond     Device pointer to a serialized matrix of
-      *                        initial conditions; i.e., given a 2D matrix of R rows
-      *                        and C columns, where every entry is an n-tuple of
-      *                        initial conditions (y_0[0], y_0[1], ..., y_0[n-1]),
-      *                        the vector pointed by devInitCond contains R*C*n
-      *                        serialized entries, starting with the first row from
-      *                        left to right, then the second one in the same order
-      *                        and so on.
-      *                        The elements of vector pointed by initCond are
-      *                        replaced with the new computed values at the end of
-      *                        the algorithm; please, make sure you will not need
-      *                        them after calling this procedure.
-      * @param[in,out]  Real*  hOrig        Step size. This code controls
-      *                        automatically the step size, but this value is taken
-      *                        as a test for the first try; furthermore, the method
-      *                        returns the last computed value of h to let the user
-      *                        know the final state of the solver.
-      * @param[in]      Real   hmax         Value of the maximum step size allowed,
-      *                        usually defined as x_{end} - x_0, as we do not to
-      *                        exceed x_{end} in one iteration.
-      * @param[in]      Real*  data         Device pointer to a serialized matrix of
-      *                        additional data to be passed to computeComonent;
-      *                        currently, this is used to pass the constants b and q
-      *                        of each ray to the KerrGeodesicEquations method.
-      * @param[out]     int*   iterations   Output variable to know how many
-      *                        iterations were spent in the computation
-      * @param[in,out]  float* globalFacold Input and output variable, used as a
-      *                        first value for facold and to let the caller know the
-      *                        final value of facold.
-      */
-    """
-
+                     double fac2    = 10.0) nogil:
     ################################
     ##### Configuration vars #######
     ################################
@@ -626,39 +344,37 @@ cdef int SolverRK45( double* initCond, double* globalX0, double xend,
     cdef double fac1_inverse = 1.0 / fac1
     cdef double fac2_inverse = 1.0 / fac2
 
-    cdef double innerDiskRadius = 0
-    cdef double outerDiskRadius = 10
+    cdef double inner_disk_radius = 0
+    cdef double outer_disk_radius = 0
+
+    if universe != NULL:
+        inner_disk_radius = universe.inner_disk_radius
+        outer_disk_radius = universe.outer_disk_radius
 
     
     #################################
     #####  Variable definitions #####
     #################################
 
-    # Declare a counter for the loops, in order not to declare it multiple
-    # times :)
-
+    # Declare a counter for the loops
     cdef int i
     
     # Loop variable to manage the automatic step size detection.
-    
     cdef double hnew
     
     # Retrieve the value of h and the value of x0
-    cdef double h = hOrig[0]
-    cdef double x0 = globalX0[0]
+    cdef double h = h_orig[0]
+    cdef double x0 = initial_x0[0]
 
     # Check the direction of the integration: to the future or to the past
     # and get the absolute value of the maximum step size.
-
-    cdef double integrationDirection = +1. if xend - x0 > 0. else -1.
+    cdef double integration_direction = +1. if xend - x0 > 0. else -1.
     hmax = fabs(hmax)
 
-    cdef size_t sizeBytes = sizeof(double)*SYSTEM_SIZE
-     
     # Auxiliar array to store the intermediate calls to the
     # KerrGeodesicEquations function
 
-    cdef double y1[5]  # TODO: SYSTEM_SIZE
+    cdef double y1[SYSTEM_SIZE]
 
     # Auxiliary variables used to compute the errors at each step.
     
@@ -671,7 +387,7 @@ cdef int SolverRK45( double* initCond, double* globalX0, double xend,
     # bounds, but you can see the corresponding chunk of code far below to
     # know more about the puropose of each of these variables.
 
-    cdef float facold = globalFacold[0]
+    cdef float fac_old = initial_fac_old[0]
     cdef float expo1 = 0.2 - beta * 0.75
     cdef float fac11, fac
 
@@ -684,19 +400,19 @@ cdef int SolverRK45( double* initCond, double* globalX0, double xend,
     # Variables to keep track of the current r and the previous and
     # current theta
     cdef double currentR;
-    cdef int prevThetaSign, currentThetaSign;
+    cdef int prev_theta_sign, current_theta_sign;
 
     # Initialize previous theta to the initial conditions
-    prevThetaSign = sign(initCond[1] - M_PI/2);
+    prev_theta_sign = sign(init_cond[1] - M_PI / 2);
 
     # Local variable to know how many iterations spent the bisect in the
     # current step.
-    cdef int bisectIter = 0;
+    cdef int bisect_iter = 0;
 
     # Initial status of the ray: SPHERE
     cdef int status = SPHERE
 
-    cdef float horizonRadius = 2.0
+    cdef float horizon_radius = 2.0
     cdef int last = False
 
 
@@ -706,19 +422,19 @@ cdef int SolverRK45( double* initCond, double* globalX0, double xend,
         # not too near. Although the last condition belongs to the raytracer
         # logic, it HAS to be checked here.
         
-        if (0.1 * fabs(h) <= fabs(x0) * uround and not last):
-            hOrig[0] = h
-            return -1
+        if 0.1 * fabs(h) <= fabs(x0) * uround and not last: #TODO Set the check for the horizon
+            h_orig[0] = h
+            return HORIZON
 
         # PHASE 0. Check if the current time x_0 plus the current step
         # (multiplied by a safety factor to prevent steps too small)
         # exceeds the end time x_{end}.
 
-        if ((x0 + 1.01*h - xend) * integrationDirection > 0.0):
+        if (x0 + 1.01 * h - xend) * integration_direction > 0.0:
             h = xend - x0
             last = True
         
-        err = advance_step(initCond, y1, data, h, atoli, rtoli)
+        err = advance_step(init_cond, y1, data, h, atoli, rtoli)
 
         # For full information about the step size computation, please see
         # equation (4.13) and its surroundings in [1] and the notes in
@@ -733,13 +449,13 @@ cdef int SolverRK45( double* initCond, double* globalX0, double xend,
 
         # Stabilization computations:
         fac11 = pow(err, expo1)
-        fac = fac11 / pow(facold, beta)
+        fac = fac11 / pow(fac_old, beta)
         # We need the multiplying factor (always taking into account the
         # safe factor) to be between fac1 and fac2 i.e., we require
-        # fac1 <= hnew/h <= fac2:
+        # fac1 <= h_new/h <= fac2:
         fac = fmax(fac2_inverse, fmin(fac1_inverse, fac * safeInv))
         # New step final (but temporary) computation
-        hnew = h / fac
+        h_new = h / fac
 
         # PHASE 3. Check whether the current step has to be repeated,
         # depending on its estimated error:
@@ -750,14 +466,14 @@ cdef int SolverRK45( double* initCond, double* globalX0, double xend,
 
             # Stabilization technique with the minimum and safe factors
             #  when the step is rejected.
-            hnew = h / fmin(fac1_inverse, fac11 * safeInv)
+            h_new = h / fmin(fac1_inverse, fac11 * safeInv)
             reject = True
 
         # PHASE 3.2: ACCEPT STEP if err <= 1.
         else:
 
             # Update old factor to new current error (upper bounded to 1e-4)
-            facold = fmax(err, 1.0e-4)
+            fac_old = fmax(err, 1.0e-4)
 
             # Advance current time!
             x0 += h
@@ -765,96 +481,96 @@ cdef int SolverRK45( double* initCond, double* globalX0, double xend,
             # Assure the new step size does not exceeds the provided
             # bounds.
 
-            if (fabs(hnew) > hmax):
-                hnew = integrationDirection * hmax
+            if fabs(h_new) > hmax:
+                h_new = integration_direction * hmax
 
             # If the previous step was rejected, take the minimum of the
             # old and new step sizes
 
             if reject:
-                hnew = integrationDirection * fmin(fabs(hnew), fabs(h))
+                h_new = integration_direction * fmin(fabs(h_new), fabs(h))
 
             # Necessary update for next steps: the local initCond variable holds
             # the current initial condition (now the computed solution)
 
-            memcpy(initCond, y1, sizeof(double) * SYSTEM_SIZE)
+            memcpy(init_cond, y1, sizeof(double) * SYSTEM_SIZE)
 
             # This step was accepted, so it was not rejected, so reject is
             # false. SCIENCE.
 
             reject = False
 
-            currentThetaSign = sign(y1[1] - M_PI/2);
+            current_theta_sign = sign(y1[1] - M_PI / 2);
 
-            if prevThetaSign != currentThetaSign:
-                bisectIter += bisect(y1, data, h, x0, atoli, rtoli)
+            if prev_theta_sign != current_theta_sign:
+                bisect_iter += bisect(y1, data, h, x0, atoli, rtoli)
 
                 # Retrieve the current r
-                currentR = y1[0]
+                current_r = y1[0]
 
                 # Finally, check whether the current r is inside the disk,
                 # updating the status and copying back the data in the
                 # case it is.
-                if innerDiskRadius<currentR and currentR<outerDiskRadius :
-                    memcpy(initCond, y1, sizeof(double)*SYSTEM_SIZE)
+                if inner_disk_radius< current_r < outer_disk_radius:
+                    memcpy(init_cond, y1, sizeof(double) * SYSTEM_SIZE)
                     status = DISK
                     break
 
             #Update the previous variable for the next step computation
-            prevThetaSign = currentThetaSign;
+            prev_theta_sign = current_theta_sign;
 
         # Final step size update!
 
-        h = hnew
+        h = h_new
 
     # END WHILE LOOP
 
-    # Update the user's h, facold and x0 
+    # Update the user's h, fac_old and x0
     
-    hOrig[0] = h
-    globalFacold[0] = facold
-    globalX0[0] = x0
+    h_orig[0] = h
+    initial_fac_old[0] = fac_old
+    initial_x0[0] = x0
     
     return status
 
 
-cdef double advance_step(double* initCond, double* y1, double* data,double h,double atoli,double rtoli) nogil:
-
-    cdef float errors[5]           # TODO: SYSTEM_SIZE Local error of each eq.
+cdef double advance_step(double* initCond, double* y1, double* data,
+                         double h, double atoli, double rtoli) nogil:
+    # Local error of each eq.
+    cdef float errors[SYSTEM_SIZE]
     # Auxiliar arrays to store the intermediate K1, ..., K7 computations
-    # TODO: This 2 is SYSTEM_SIZE!!
-    cdef double k1[5]
-    cdef double k2[5]
-    cdef double k3[5]
-    cdef double k4[5]
-    cdef double k5[5]
-    cdef double k6[5]
-    cdef double k7[5]
+    cdef double k1[SYSTEM_SIZE]
+    cdef double k2[SYSTEM_SIZE]
+    cdef double k3[SYSTEM_SIZE]
+    cdef double k4[SYSTEM_SIZE]
+    cdef double k5[SYSTEM_SIZE]
+    cdef double k6[SYSTEM_SIZE]
+    cdef double k7[SYSTEM_SIZE]
     # K1 computation
     KerrGeodesicEquations(initCond, k1, data)
     # K2 computation
-    for i in range(5):  # TODO: SYSTEM_SIZE
+    for i in range(SYSTEM_SIZE):
         y1[i] = initCond[i] + h * A21 * k1[i]
     KerrGeodesicEquations(y1, k2, data)
     # K3 computation
-    for i in range(5):  # TODO: SYSTEM_SIZE
+    for i in range(SYSTEM_SIZE):
         y1[i] = initCond[i] + h * (A31 * k1[i] + A32 * k2[i])
     KerrGeodesicEquations(y1, k3, data)
     # K4 computation
-    for i in range(5):  # TODO: SYSTEM_SIZE
+    for i in range(SYSTEM_SIZE):
         y1[i] = initCond[i] + h * (A41 * k1[i] +
                                    A42 * k2[i] +
                                    A43 * k3[i])
     KerrGeodesicEquations(y1, k4, data)
     # K5 computation
-    for i in range(5):  # TODO: SYSTEM_SIZE
+    for i in range(SYSTEM_SIZE):
         y1[i] = initCond[i] + h * (A51 * k1[i] +
                                    A52 * k2[i] +
                                    A53 * k3[i] +
                                    A54 * k4[i])
     KerrGeodesicEquations(y1, k5, data)
     # K6 computation
-    for i in range(5):  # TODO: SYSTEM_SIZE
+    for i in range(SYSTEM_SIZE):
         y1[i] = initCond[i] + h * (A61 * k1[i] +
                                    A62 * k2[i] +
                                    A63 * k3[i] +
@@ -862,7 +578,7 @@ cdef double advance_step(double* initCond, double* y1, double* data,double h,dou
                                    A65 * k5[i])
     KerrGeodesicEquations(y1, k6, data)
     # K7 computation
-    for i in range(5):  # TODO: SYSTEM_SIZE
+    for i in range(SYSTEM_SIZE):
         y1[i] = initCond[i] + h * (A71 * k1[i] +
                                    A73 * k3[i] +
                                    A74 * k4[i] +
@@ -879,7 +595,7 @@ cdef double advance_step(double* initCond, double* y1, double* data,double h,dou
     # from y, the differences between the coefficientes of each
     # solution have been computed and the error is directly obtained
     # using them:
-    for i in range(5):  # TODO: SYSTEM_SIZE
+    for i in range(SYSTEM_SIZE):
         errors[i] = h * (E1 * k1[i] +
                          E3 * k3[i] +
                          E4 * k4[i] +
@@ -887,7 +603,7 @@ cdef double advance_step(double* initCond, double* y1, double* data,double h,dou
                          E6 * k6[i] +
                          E7 * k7[i])
     cdef float err = 0
-    for i in range(5):  # TODO: SYSTEM_SIZE
+    for i in range(SYSTEM_SIZE):
         # The local estimated error has to satisfy the following
         # condition: |err[i]| < Atol[i] + Rtol*max(|y_0[i]|, |y_j[i]|)
         # (see equation (4.10), [1]). The variable sk stores the right
@@ -910,7 +626,8 @@ cdef double advance_step(double* initCond, double* y1, double* data,double h,dou
     return err
 
 
-cdef int bisect(double* yOriginal, double* data, double step, double x, double atoli, double rtoli) nogil:
+cdef int bisect(double* yOriginal, double* data, double first_step,
+                double x, double atoli, double rtoli) nogil:
 
     cdef double BISECT_TOL = 0.000001
     cdef int BISECT_MAX_ITER = 100
@@ -922,11 +639,11 @@ cdef int bisect(double* yOriginal, double* data, double step, double x, double a
     prevThetaCentered = yOriginal[1] - M_PI / 2
 
     # The first step shall be to the other side and half of its length.
-    step = - step * 0.5
+    cdef double step = - first_step * 0.5
 
     # Loop variables, to control that the iterations does not exceed a maximum
     # number
-    cdef int iter = 0
+    cdef int iterations = 0
 
     # Array used by advanceStep() routine, which expects a pointer where the
     # computed new state should be stored
@@ -941,7 +658,7 @@ cdef int bisect(double* yOriginal, double* data, double step, double x, double a
     #    3. It repeats 1 and 2 until the current theta is very near of Pi/2
     #    ("very near" is defined by BISECT_TOL) or until the number of
     #    iterations exceeds a maximum number previously defined.
-    while(fabs(prevThetaCentered) > BISECT_TOL and iter < BISECT_MAX_ITER):
+    while fabs(prevThetaCentered) > BISECT_TOL and iterations < BISECT_MAX_ITER:
         # 1. Advance the ray one step.
         advance_step(yOriginal,yNew, data,step, atoli, rtoli)
         memcpy(yOriginal, yNew, sizeof(double)*SYSTEM_SIZE)
@@ -957,13 +674,14 @@ cdef int bisect(double* yOriginal, double* data, double step, double x, double a
         # Update the previous theta, centered in zero, with the current one
         prevThetaCentered = currentThetaCentered
 
-        iter+=1
+        iterations+=1
 
     # Return the number of iterations spent in the loop
-    return iter
+    return iterations
 
-
-##### UTILS
+################################################
+##                C FUNCTIONS                 ##
+################################################
 """
 /**
  * Returns the sign of `x`; i.e., it returns +1 if x >= 0 and -1 otherwise.
@@ -973,4 +691,3 @@ cdef int bisect(double* yOriginal, double* data, double step, double x, double a
 """
 cdef inline int sign(double x) nogil:
     return -1 if x < 0 else +1
-

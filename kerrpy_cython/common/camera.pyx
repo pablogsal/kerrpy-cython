@@ -2,10 +2,10 @@
 
 from libc.math cimport exp, sin, cos, sqrt, atan
 
-from kerrpy_cython._common.metric_utils cimport MetricValues
-from kerrpy_cython._common.camera cimport Camera
+from kerrpy_cython.common.metric_utils cimport MetricValues
+from kerrpy_cython.common.camera cimport Camera
 
-cdef Camera _compute_camera_values(dict camera_values, MetricValues* metric):
+cdef Camera compute_camera_values(dict camera_values, MetricValues* metric):
 
     cdef Camera camera
 

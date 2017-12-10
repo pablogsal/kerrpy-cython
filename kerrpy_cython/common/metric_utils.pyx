@@ -1,9 +1,9 @@
 #cython: language_level=3, boundscheck=False,cdivision=True
 
 from libc.math cimport sin, cos, sqrt
-from kerrpy_cython._common.metric_utils cimport MetricValues
+from kerrpy_cython.common.metric_utils cimport MetricValues
 
-cdef MetricValues _compute_metric_values(double a, double r, double theta):
+cdef MetricValues compute_metric_values(double a, double r, double theta):
     cdef MetricValues metric_values
     # Shorten long named variables to ease the notation
     a2 = a * a

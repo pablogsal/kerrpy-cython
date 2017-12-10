@@ -1,19 +1,21 @@
 #cython: language_level=3, boundscheck=False,cdivision=True
 
-import numpy as np
-
 from cython.parallel cimport prange
-cimport numpy as np
 from libc.math cimport M_PI as pi
 from libc.math cimport *
 
-from kerrpy_cython._common.camera cimport Camera, _compute_camera_values
-from kerrpy_cython._common.metric_utils cimport MetricValues, _compute_metric_values
+import numpy as np
+cimport numpy as np
+
+from kerrpy_cython.common.camera cimport Camera, compute_camera_values
+from kerrpy_cython.common.metric_utils cimport MetricValues, compute_metric_values
 
 ################################################
 ##            GLOBAL DEFINITIONS              ##
 ################################################
 
+DEF SYSTEM_SIZE = 5
+DEF DATA_SIZE = 4
 
 ################################################
 ##         PYTHON-ACCESIBLE FUNCTIONS         ##
@@ -22,14 +24,14 @@ from kerrpy_cython._common.metric_utils cimport MetricValues, _compute_metric_va
 # Notice that these functions HAVE overhead because they interface with python code and
 # python objects will be constructed and unpacked each time the function is summoned.
 
-cpdef get_initial_conditions(dict camera_values, double a, parallel=False):
-    cdef MetricValues metric = _compute_metric_values(a, camera_values["r"], camera_values["theta"])
-    cdef Camera camera = _compute_camera_values(camera_values, &metric)
+cpdef generate_initial_conditions(dict camera_values, double a, parallel=False):
+    cdef MetricValues metric = compute_metric_values(a, camera_values["r"], camera_values["theta"])
+    cdef Camera camera = compute_camera_values(camera_values, &metric)
 
     cdef int image_rows = camera_values["rows"]
     cdef int image_cols = camera_values["cols"]
-    cdef double[:] initial_conditions = np.zeros(image_rows*image_cols*5)
-    cdef double[:] constants = np.zeros(image_rows*image_cols*4)
+    cdef double[:] initial_conditions = np.zeros(image_rows*image_cols*SYSTEM_SIZE)
+    cdef double[:] constants = np.zeros(image_rows*image_cols*DATA_SIZE)
 
     if parallel:
         _get_initial_conditions_parallel(initial_conditions, constants, &camera, &metric)
@@ -55,7 +57,8 @@ cdef void _get_initial_conditions(double[:] initial_conditions, double[:] consta
     for row in range(camera.rows):
         for col in range(camera.cols):
             pixel =  col+camera.cols*row
-            setInitialConditions(&initial_conditions[pixel * 5], &constants[pixel * 4], row, col, camera, metric)
+            _set_initial_conditions(&initial_conditions[pixel * SYSTEM_SIZE],
+                                    &constants[pixel * DATA_SIZE], row, col, camera, metric)
 
 cdef void _get_initial_conditions_parallel(double[:] initial_conditions, double[:] constants,
                                       Camera* camera, MetricValues* metric):
@@ -63,9 +66,10 @@ cdef void _get_initial_conditions_parallel(double[:] initial_conditions, double[
     for row in prange(camera.rows, nogil=True, schedule="guided"):
         for col in range(camera.cols):
             pixel =  col+camera.cols*row
-            setInitialConditions(&initial_conditions[pixel * 5], &constants[pixel * 4], row, col, camera, metric)
+            _set_initial_conditions(&initial_conditions[pixel * SYSTEM_SIZE],
+                                    &constants[pixel * DATA_SIZE], row, col, camera, metric)
 
-cdef void setInitialConditions(double* initial_conditions, double* constants,
+cdef void _set_initial_conditions(double* initial_conditions, double* constants,
                            int row, int col, Camera* camera, MetricValues* metric) nogil:
     cdef double pR, pTheta, pPhi, b, q
 
@@ -80,9 +84,9 @@ cdef void setInitialConditions(double* initial_conditions, double* constants,
 
     # Compute canonical momenta of the ray and the conserved quantites
     # b and q
-    getCanonicalMomenta(rayTheta, rayPhi, &pR, &pTheta, &pPhi, metric, camera)
+    _canonical_momenta(rayTheta, rayPhi, &pR, &pTheta, &pPhi, metric, camera)
 
-    getConservedQuantities(pTheta, pPhi, camera.theta, metric.a, &b, &q)
+    _conserved_quantities(pTheta, pPhi, camera.theta, metric.a, &b, &q)
 
     # Save ray's initial conditions
     initial_conditions[0] = camera.r
@@ -97,9 +101,9 @@ cdef void setInitialConditions(double* initial_conditions, double* constants,
     constants[2] = metric.a
     constants[3] = 1.0
 
-cdef void getCanonicalMomenta(double  rayTheta, double  rayPhi,
-                              double *pR, double *pTheta, double *pPhi,
-                              MetricValues* metric, Camera* camera) nogil:
+cdef void _canonical_momenta(double  rayTheta, double  rayPhi,
+                             double *pR, double *pTheta, double *pPhi,
+                             MetricValues* metric, Camera* camera) nogil:
     # **************************** SET NORMAL **************************** #
     # Cartesian components of the unit vector N pointing in the direction of
     # the incoming ray
@@ -137,8 +141,8 @@ cdef void getCanonicalMomenta(double  rayTheta, double  rayPhi,
     pTheta[0] = E * metric.rho * nTheta
     pPhi[0] = E * metric.pomega * nPhi
 
-cdef void getConservedQuantities(double  pTheta, double  pPhi,
-                                 double  theta, double a, double*b, double*q) nogil:
+cdef void _conserved_quantities(double  pTheta, double  pPhi,
+                                double  theta, double a, double*b, double*q) nogil:
     # ********************* GET CONSERVED QUANTITIES ********************* #
     # Get conserved quantities. See (A.12)
     b[0] = pPhi

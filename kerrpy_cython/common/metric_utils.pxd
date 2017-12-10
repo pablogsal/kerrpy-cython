@@ -15,4 +15,4 @@ cdef struct MetricValues:
     double omega
     double pomega
 
-cdef MetricValues _compute_metric_values(double a, double r, double theta)
+cdef MetricValues compute_metric_values(double a, double r, double theta)
