@@ -1,6 +1,8 @@
 from libc.math cimport *
 from cython.parallel cimport prange
 
+import numpy as np
+
 from kerrpy_cython.common.camera cimport Camera, compute_camera_values
 from kerrpy_cython.common.metric_utils cimport MetricValues, compute_metric_values
 from kerrpy_cython.common.universe cimport Universe
@@ -44,13 +46,17 @@ def call_kernel(double[:] init_conditions, double[:] data, int[:] status,
 
     cdef int image_rows = camera_values["rows"]
     cdef int image_cols = camera_values["cols"]
+
+    cdef unsigned int[:] iterations = np.zeros(camera.rows * camera.cols,dtype=np.uint32)
     if parallel:
         if progress:
-            kernel_parallel_progress(0, -150, init_conditions, -0.001, -150, data, status, &camera, &universe)
+            kernel_parallel_progress(0, -150, init_conditions, -0.001, -150, data, status, &camera, &universe, iterations)
         else:
-            kernel_parallel(0, -150, init_conditions, -0.001, -150, data, status, &camera, &universe)
+            kernel_parallel(0, -150, init_conditions, -0.001, -150, data, status, &camera, &universe, iterations)
     else:
-        kernel_serial(0, -150, init_conditions, -0.001, -150, data, status, &camera, &universe)
+        kernel_serial(0, -150, init_conditions, -0.001, -150, data, status, &camera, &universe, iterations)
+
+    return iterations
 
 ################################################
 ##                C FUNCTIONS                 ##
@@ -65,48 +71,49 @@ def call_kernel(double[:] init_conditions, double[:] data, int[:] status,
 
 cdef void kernel_serial(double x0, double xend, double[:] initial_conditions, double h,
                        double hmax, double[:] data, int[:] status,
-                       Camera* camera, Universe* universe):
+                       Camera* camera, Universe* universe, unsigned int[:] iterations):
     cdef int row, col, pixel
     for row in tqdm.trange(camera.rows):
         for col in tqdm.trange(camera.cols):
             pixel =  col+camera.cols*row
             kernel(x0, xend, &initial_conditions[pixel * SYSTEM_SIZE],h, hmax,
-                   &data[pixel * DATA_SIZE], &status[pixel], camera, universe)
+                   &data[pixel * DATA_SIZE], &status[pixel], camera, universe,
+                   &iterations[pixel])
 
 
 cdef void kernel_parallel_progress(double x0, double xend, double[:] initial_conditions, double h,
                        double hmax, double[:] data, int[:] status,
-                       Camera* camera, Universe* universe):
+                       Camera* camera, Universe* universe, unsigned int[:] iterations):
     cdef int row, col, pixel
     for row in tqdm.trange(camera.rows):
         for col in prange(camera.cols, nogil=True, schedule="guided"):
             pixel =  col+camera.cols*row
             kernel(x0, xend, &initial_conditions[pixel * SYSTEM_SIZE],h, hmax,
-                   &data[pixel * DATA_SIZE], &status[pixel], camera, universe)
+                   &data[pixel * DATA_SIZE], &status[pixel], camera, universe,
+                   &iterations[pixel])
 
 
 
 cdef void kernel_parallel(double x0, double xend, double[:] initial_conditions, double h,
                        double hmax, double[:] data, int[:] status,
-                       Camera* camera, Universe* universe):
+                       Camera* camera, Universe* universe, unsigned int[:] iterations):
     cdef int row, col, pixel
     for row in prange(camera.rows,nogil=True, schedule="guided"):
         for col in range(camera.cols):
             pixel =  col+camera.cols*row
             kernel(x0, xend, &initial_conditions[pixel * SYSTEM_SIZE],h, hmax,
-                   &data[pixel * DATA_SIZE], &status[pixel], camera, universe)
+                   &data[pixel * DATA_SIZE], &status[pixel], camera, universe,
+                   &iterations[pixel])
 
 cdef void kernel(double x0, double xend, double* pixel_init_conditions, double h,
                        double hmax, double* pixel_data, int* pixel_status,
-                       Camera* camera, Universe* universe) nogil:
+                       Camera* camera, Universe* universe, unsigned int* iterations) nogil:
     # Compute pixel's row and col of this thread
     cdef int local_status
     cdef double x
-    cdef int iterations
     cdef double facold = 1.0e-4 #TODO Allow the user to set this
-    # Compute pixel unique identifier for this thread
 
-    # Array of status flags: at the output, the (x,y)-th element will be
+    # Status flag: at the output, the (x,y)-th element will be
     # set to SPHERE, HORIZON or disk, showing the final state of the ray.
     local_status = pixel_status[0]
 
@@ -116,10 +123,6 @@ cdef void kernel(double x0, double xend, double* pixel_init_conditions, double h
     if local_status == SPHERE:
         # Current time
         x = x0
-
-        # Local variable to know how many iterations spent the solver in
-        # the current step.
-        iterations = 0
 
         # MAIN ROUTINE. Integrate the ray from x to xend, checking disk
         # collisions on the go with the following algorithm:
@@ -135,7 +138,8 @@ cdef void kernel(double x0, double xend, double* pixel_init_conditions, double h
         #          the horizon).
         #          2.2. If the answer to the 2. test is positive: update
         #          the status of the ray to HORIZON.
-        local_status = solver_rk45(pixel_init_conditions, &x,xend, &h, xend - x, pixel_data, &facold, universe)
+        local_status = solver_rk45(pixel_init_conditions, &x, xend, &h, xend - x,
+                                   pixel_data, &facold, universe, iterations)
 
         # Update the global status variable with the new computed status
         pixel_status[0] = local_status

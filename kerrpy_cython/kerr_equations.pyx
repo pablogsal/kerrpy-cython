@@ -1,9 +1,6 @@
-import cython
-from libc.math cimport cos,sin
+cdef extern from "math.h" nogil:
+    void sincos(double x, double *sin, double *cos);
 
-@cython.boundscheck(False) # turn off bounds-checking for entire function
-@cython.wraparound(False)  # turn off negative index wrapping for entire function
-@cython.cdivision(True)    # tuern off zerodivisioncheck
 cdef void KerrGeodesicEquations(double* y, double* f,double* data) nogil:
     """
     This function computes the right hand side of the Kerr geodesic equations described
@@ -68,10 +65,9 @@ cdef void KerrGeodesicEquations(double* y, double* f,double* data) nogil:
     r2 = r*r
 
     # Sine and cosine of theta, as well as their squares and inverses.
-    sinT = sin(theta)
-    cosT = cos(theta)
+    sincos(theta,&sinT,&cosT)
     sinT2 = sinT*sinT
-    sinT2Inv = 1/sinT2
+    sinT2Inv = 1.0/sinT2
     cosT2 = cosT*cosT
 
     # Retrieval of the constants data: b and q, along with the computation of
@@ -90,15 +86,15 @@ cdef void KerrGeodesicEquations(double* y, double* f,double* data) nogil:
 
     # Commonly used variables: R, D, Theta (that is called Z) and
     # rho (and its square and cube).
-    D = r2 - 2*r + a2
-    Dinv = 1/D
+    D = r2 - 2.0*r + a2
+    Dinv = 1.0/D
 
     P = ( a2 + r2 ) * energy - a * b
     R = P*P - D*(bMinusAE*bMinusAE + q )
     Z = q - cosT2*(b2*sinT2Inv - energy2 *  a2)
 
-    rho2Inv = 1/(r2 + a2*cosT2)
-    twoRho2Inv = rho2Inv/2
+    rho2Inv = 1.0/(r2 + a2*cosT2)
+    twoRho2Inv = rho2Inv/2.0
     rho4Inv = rho2Inv*rho2Inv
 
     # Squares of the momenta components
@@ -106,8 +102,8 @@ cdef void KerrGeodesicEquations(double* y, double* f,double* data) nogil:
     pTheta2 = pTheta*pTheta
 
     # Double b and double r, that's it! :)
-    twob = 2*b
-    twor = 2*r
+    twob = 2.0*b
+    twor = 2.0*r
 
     # Declaration of variables used in the actual computation: dR, dZ, dRho
     # and dD will store the derivatives of the corresponding functions (with
@@ -131,7 +127,7 @@ cdef void KerrGeodesicEquations(double* y, double* f,double* data) nogil:
 
     # *********************** EQUATION 4 *********************** //
     # Derivatives with respect to r
-    dD = twor - 2
+    dD = twor - 2.0
     dR = 4.0 * r * energy * P  - ( q + bMinusAE * bMinusAE ) * ( twor - 2.0 )
     DZplusR = D*Z + R
 
@@ -150,7 +146,7 @@ cdef void KerrGeodesicEquations(double* y, double* f,double* data) nogil:
     cdef double cosT3 = cosT2*cosT
     cdef double sinT3 = sinT2*sinT
 
-    dZ = - 2 * ( Z - q ) / cosT * sinT + (2*b2*cosT3)/(sinT3)
+    dZ = - 2.0 * ( Z - q ) / cosT * sinT + (2.0*b2*cosT3) / sinT3
 
     sum1 = + pTheta2
     sum2 = + D*pR2

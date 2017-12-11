@@ -310,9 +310,10 @@ cdef void multistep_solver(double x, double xend, int n_steps,
     result[0,3] = initial_conditions[3]
     result[0,4] = initial_conditions[4]
 
-
+    cdef unsigned int iterations;
     for current_step in range(n_steps):
-        solver_rk45(initial_conditions, &x, x + step, &hOrig, 0.1, aditional_data, &globalFacold, universe)
+        solver_rk45(initial_conditions, &x, x + step, &hOrig, 0.1,
+                    aditional_data, &globalFacold, universe, &iterations)
 
         # Store the result of the integration in the buffer
 
@@ -322,14 +323,11 @@ cdef void multistep_solver(double x, double xend, int n_steps,
         result[current_step + 1,3] = initial_conditions[3]
         result[current_step + 1,4] = initial_conditions[4]
 
-
-@cython.boundscheck(False) # turn off bounds-checking for entire function
-@cython.wraparound(False)  # turn off negative index wrapping for entire function
-@cython.cdivision(True)    # tuern off zerodivisioncheck
 cdef int solver_rk45(double* init_cond, double* initial_x0, double xend,
                      double* h_orig, double hmax, double* data,
                      double* initial_fac_old,
                      Universe* universe,
+                     unsigned int* iterations,
                      double rtoli   = 1e-06,
                      double atoli   = 1e-12,
                      double safe    = 0.9,
@@ -522,6 +520,7 @@ cdef int solver_rk45(double* init_cond, double* initial_x0, double xend,
         # Final step size update!
 
         h = h_new
+        iterations[0] += 1
 
     # END WHILE LOOP
 
@@ -629,8 +628,8 @@ cdef double advance_step(double* initCond, double* y1, double* data,
 cdef int bisect(double* yOriginal, double* data, double first_step,
                 double x, double atoli, double rtoli) nogil:
 
-    cdef double BISECT_TOL = 0.000001
-    cdef int BISECT_MAX_ITER = 100
+    cdef double BISECT_TOL = 0.000001 #TODO Make this configurable
+    cdef int BISECT_MAX_ITER = 100 #TODO Make this configurable
 
     # It is necessary to maintain the previous theta to know the direction
     # change; we'll store it centered in zero, and not in pi/2 in order to
