@@ -98,12 +98,10 @@ cdef void kernel_parallel(double x0, double xend, double[:] initial_conditions, 
                        double hmax, double[:] data, int[:] status,
                        Camera* camera, Universe* universe, unsigned int[:] iterations):
     cdef int row, col, pixel
-    for row in prange(camera.rows,nogil=True, schedule="guided"):
-        for col in range(camera.cols):
-            pixel =  col+camera.cols*row
-            kernel(x0, xend, &initial_conditions[pixel * SYSTEM_SIZE],h, hmax,
-                   &data[pixel * DATA_SIZE], &status[pixel], camera, universe,
-                   &iterations[pixel])
+    for pixel in prange(camera.rows * camera.cols,nogil=True, schedule="guided"):
+        kernel(x0, xend, &initial_conditions[pixel * SYSTEM_SIZE],h, hmax,
+               &data[pixel * DATA_SIZE], &status[pixel], camera, universe,
+               &iterations[pixel])
 
 cdef void kernel(double x0, double xend, double* pixel_init_conditions, double h,
                        double hmax, double* pixel_data, int* pixel_status,
@@ -120,7 +118,7 @@ cdef void kernel(double x0, double xend, double* pixel_init_conditions, double h
     # Integrate the ray only if it's still in the sphere. If it has
     # collided either with the disk or within the horizon, it is not
     # necessary to integrate it anymore.
-    if local_status == SPHERE:
+    if local_status == SPHERE or local_status == -1:
         # Current time
         x = x0
 
