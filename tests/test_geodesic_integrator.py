@@ -75,4 +75,7 @@ def test_general_integrator():
                                                   'test_data/general_ray.csv')
                                      , delimiter=',')
     mathematica_data = mathematica_data[:301]
+    npt.assert_almost_equal(mathematica_data,
+                            general_integrator_ray,
+                            decimal=5)
 

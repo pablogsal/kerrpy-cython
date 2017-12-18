@@ -1,12 +1,8 @@
 #cython: language_level=3, boundscheck=False,cdivision=True
 
 from libc.math cimport *
-from libc.string cimport memcpy
-cimport numpy as np
 import numpy as np
-cimport cython
-
-
+cimport numpy as np
 
 ################################################
 ##         PYTHON-ACCESIBLE FUNCTIONS         ##
@@ -127,3 +123,77 @@ cdef double calculate_Kretschmann( double r, double theta, double a):
     cdef double denom     =  acostheta2 + r2
     denom          =  denom * denom * denom * denom * denom * denom
     return numerator / denom
+
+cpdef double calculate_temporal_component(double [:] three_momenta,
+                                  double [:] three_position,
+                                  double a, int causality):
+    """
+    Calculate the temporal component of the momenta given the value of the three-momenta and
+    its position in the spacetime.
+
+    :param three_position: np.array[:]
+        A numpy array representing the initial position of the geodesic in a time slice of
+        the spacetime.
+
+        It must be given in the form
+
+        three_position = [r, theta, phi]
+
+        where {r,theta,phi} are the Boyer-Lindquist coordinates.
+
+    :param thee_momenta: np.array[:]
+        A numpy array representing the initial momenta ( covariant tangent vector) of the
+        geodesic in a time slice of the spacetime.
+
+        It must be given in the form
+
+        three_momenta = [pr, ptheta, pphi]
+
+        where {pr, ptheta, pphi} are the covariant components of the tangent three-vector in
+        Boyer-Lindquist coordinates.
+
+    :param causality: int
+        The causal character of the geodesic tangent vector.
+
+            - (-1) for timelike geodesics.
+            -   0  for spacelike geodesics.
+    """
+
+    cdef double r = three_position[0]
+    cdef double theta = three_position[1]
+    cdef double phi = three_position[2]
+    cdef double pr = three_momenta[0]
+    cdef double ptheta = three_momenta[1]
+    cdef double pphi = three_momenta[2]
+    # Calculate common terms
+
+    cdef double r2 = r*r
+    cdef double a2 = a*a
+
+    cdef double ro = sqrt(r2 + a2 * cos(theta)**2)
+    cdef double delta = r2 - 2*r + a2
+    cdef double sigma = sqrt((r2 + a2)**2 - a2 * delta * sin(theta)**2)
+    cdef double pomega = sigma * sin(theta) / ro
+    cdef double omega = 2 * a * r / ( sigma * sigma )
+    cdef double alpha = ro *  sqrt(delta) / sigma
+
+    cdef double result = 0
+    if causality == 0:
+        result =  - sqrt( pphi * pphi * ro * ro +
+                      ( ptheta * ptheta + pr * pr * delta )
+                       * pomega * pomega)
+        result *= alpha
+        result /= ro * pomega
+        result -=  pphi * omega
+
+        return result
+    else:
+        result = - sqrt( pphi * pphi * ro * ro +
+                      ( ptheta * ptheta + pr * pr * delta + ro * ro )
+                       * pomega * pomega)
+        result *= alpha
+        result /= ro * pomega
+        result -=  pphi * omega
+
+        return result
+

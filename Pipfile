@@ -1,0 +1,23 @@
+[[source]]
+
+url = "https://pypi.python.org/simple"
+verify_ssl = true
+name = "pypi"
+
+
+[packages]
+
+Cython = "*"
+pytest = "*"
+numpy = "*"
+coverage = "*"
+pytest-cov = "*"
+pytest-benchmark = "*"
+setuptools = "*"
+matplotlib = "*"
+tqdm = "*"
+Pillow = "*"
+
+
+[dev-packages]
+

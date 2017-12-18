@@ -2,8 +2,9 @@
 source = kerrpy_cython
 
 [run]
-branch = True
+plugins = Cython.Coverage
 source = kerrpy_cython
+branch = True
 omit =
     tests/*
     *__init__.py

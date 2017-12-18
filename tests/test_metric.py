@@ -4,7 +4,8 @@ import pytest
 import numpy as np
 import numpy.testing as npt
 
-from kerrpy_cython import geodesic_integrator, metric
+from kerrpy_cython import metric
+from kerrpy_cython.metric import calculate_temporal_component
 
 
 def test_mathematica_comparison():
@@ -39,14 +40,14 @@ def test_temporal_component_momentum():
 
     # Test lightlike four vector
     v = np.zeros(4)
-    v[0] = geodesic_integrator.calculate_temporal_component(three_vec, three_vec, .4, causality=0)
+    v[0] = calculate_temporal_component(three_vec, three_vec, .4, causality=0)
     v[1:] = three_vec[:]
     norm = np.dot(np.dot(metric.inverse_metric(three_vec[0], three_vec[1], .4), v), v)
     npt.assert_almost_equal(norm, 0)
 
     # Test timelike four vector
     v = np.zeros(4)
-    v[0] = geodesic_integrator.calculate_temporal_component(three_vec, three_vec, a=.4, causality=-1)
+    v[0] = calculate_temporal_component(three_vec, three_vec, a=.4, causality=-1)
     v[1:] = three_vec[:]
     norm = np.dot(np.dot(metric.inverse_metric(three_vec[0], three_vec[1], a=.4), v), v)
     npt.assert_almost_equal(norm, -1)
